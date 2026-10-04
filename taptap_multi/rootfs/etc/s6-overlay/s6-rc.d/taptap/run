@@ -1,0 +1,87 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# TapTap Multi add-on
+# Runs one taptap-mqtt bridge per generated instance configuration and
+# supervises them: if any bridge exits, all are stopped and the add-on exits
+# (so the Home Assistant watchdog can restart it).
+# ==============================================================================
+
+readonly CONF_DIR="${TAPTAP_CONF_DIR:-/etc/taptap/instances}"
+readonly BRIDGE="${TAPTAP_BRIDGE:-/usr/bin/taptap/taptap-mqtt.py}"
+export PYTHONUNBUFFERED=1
+
+declare -a pids=()
+declare -A pid_name=()
+stopping=0
+
+stop_all() {
+    local pid
+    # SIGINT lets taptap-mqtt shut down gracefully (publishes MQTT LWT
+    # "offline", stops its taptap child process, removes its run file)
+    for pid in "${pids[@]}"; do
+        kill -INT "${pid}" 2>/dev/null || true
+    done
+    for _ in $(seq 1 15); do
+        local alive=0
+        for pid in "${pids[@]}"; do
+            kill -0 "${pid}" 2>/dev/null && alive=1
+        done
+        [[ "${alive}" -eq 0 ]] && return 0
+        sleep 1
+    done
+    for pid in "${pids[@]}"; do
+        kill -KILL "${pid}" 2>/dev/null || true
+    done
+}
+
+on_signal() {
+    stopping=1
+    bashio::log.info "Stopping all taptap instances..."
+    stop_all
+    exit 0
+}
+trap on_signal TERM INT
+
+shopt -s nullglob
+configs=("${CONF_DIR}"/*.ini)
+if [[ "${#configs[@]}" -eq 0 ]]; then
+    bashio::log.fatal "No instance configuration found in ${CONF_DIR}."
+    exit 1
+fi
+
+for conf in "${configs[@]}"; do
+    name="$(basename "${conf}" .ini)"
+    bashio::log.info "Starting taptap instance '${name}'..."
+    # Background jobs of a non-interactive shell ignore SIGINT; reset it so
+    # taptap-mqtt can shut down gracefully. Prefix log lines with the name.
+    ( trap - INT; exec "${BRIDGE}" "${conf}" ) \
+        > >(trap '' INT TERM
+            while IFS= read -r line; do printf '[%s] %s\n' "${name}" "${line}"; done) 2>&1 &
+    pids+=("$!")
+    pid_name[$!]="${name}"
+done
+
+# Wait until any bridge exits (or a signal arrives)
+# (bashio enables errexit: capture the status instead of letting it abort)
+exited_pid=""
+while true; do
+    rc=0
+    wait -n -p exited_pid "${pids[@]}" || rc=$?
+    if [[ "${stopping}" -eq 1 ]]; then
+        exit 0
+    fi
+    if [[ -n "${exited_pid}" ]]; then
+        break
+    fi
+done
+
+bashio::log.error "taptap instance '${pid_name[${exited_pid}]:-?}' exited with code ${rc}, stopping all instances."
+remaining=()
+for pid in "${pids[@]}"; do
+    [[ "${pid}" != "${exited_pid}" ]] && remaining+=("${pid}")
+done
+pids=("${remaining[@]}")
+stop_all
+[[ "${rc}" -eq 0 ]] && rc=1
+exit "${rc}"

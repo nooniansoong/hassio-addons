@@ -1,0 +1,81 @@
+# https://developers.home-assistant.io/docs/add-ons/configuration#add-on-config
+#
+# TapTap Multi - local fork of litinoveweedle/hassio-addons "taptap" (v0.3.4)
+# that runs one taptap-mqtt bridge per Tigo CCA / RS485 converter.
+name: TapTap Multi
+version: "0.3.4-multi.1"
+slug: taptap_multi
+description: Tigo CCA to Home Assistant MQTT bridge - multiple CCAs / RS485 converters
+url: "https://github.com/nooniansoong/hassio-addons/tree/main/taptap_multi"
+homeassistant: 2025.3.1
+arch:
+  - aarch64
+  - amd64
+init: false
+timeout: 25
+uart: true
+usb: true
+options:
+  log_level: info
+  mqtt_server: null
+  mqtt_port: 1883
+  mqtt_qos: 1
+  mqtt_timeout: 5
+  mqtt_user: null
+  mqtt_pass: null
+  taptap_topic_prefix: taptap
+  taptap_update: 10
+  taptap_timeout: 180
+  instances:
+    - name: tigo
+      port: 502
+      modules: []
+    - name: tigo2
+      port: 502
+      modules: []
+  ha_discovery_prefix: homeassistant
+  ha_birth_topic: homeassistant/status
+  ha_nodes_availability_online: true
+  ha_nodes_availability_identified: false
+  ha_strings_availability_online: true
+  ha_strings_availability_identified: false
+  ha_stats_availability_online: false
+  ha_stats_availability_identified: false
+  ha_nodes_sensors_recorder:
+    - energy
+  ha_strings_sensors_recorder:
+    - energy
+  ha_stats_sensors_recorder:
+    - energy
+schema:
+  log_level: list(trace|debug|info|notice|warning|error|fatal)?
+  mqtt_server: str
+  mqtt_port: port
+  mqtt_qos: int(0,2)
+  mqtt_timeout: int(1,10)
+  mqtt_user: str
+  mqtt_pass: password
+  taptap_topic_prefix: match((\w+)(\/\w+)*)
+  taptap_update: int
+  taptap_timeout: int
+  instances:
+    - name: match(^\w+$)
+      address: str?
+      serial: device(subsystem=tty)?
+      port: port?
+      modules:
+        - match(^(\w+)?\:(\w+):([0-9A-Z]\-[0-9A-Z]{7})?$)?
+  ha_discovery_prefix: str
+  ha_birth_topic: str
+  ha_nodes_availability_online: bool
+  ha_nodes_availability_identified: bool
+  ha_strings_availability_online: bool
+  ha_strings_availability_identified: bool
+  ha_stats_availability_online: bool
+  ha_stats_availability_identified: bool
+  ha_nodes_sensors_recorder:
+    - match(^\w+$)?
+  ha_strings_sensors_recorder:
+    - match(^\w+$)?
+  ha_stats_sensors_recorder:
+    - match(^\w+$)?

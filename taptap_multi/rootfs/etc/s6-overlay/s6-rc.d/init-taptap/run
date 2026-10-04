@@ -1,0 +1,149 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# TapTap Multi add-on
+# Generates one taptap-mqtt configuration file per configured instance
+# (one instance = one Tigo CCA / one RS485 converter).
+# ==============================================================================
+set -o pipefail
+
+readonly OPTIONS="${TAPTAP_OPTIONS_FILE:-/data/options.json}"
+readonly CONF_DIR="${TAPTAP_CONF_DIR:-/etc/taptap/instances}"
+readonly RUN_DIR="${TAPTAP_RUN_DIR:-/run/taptap}"
+readonly DATA_DIR="${TAPTAP_DATA_DIR:-/data}"
+
+opt() {
+    # Print option value from options.json, empty string when missing / null.
+    # (jq's // operator would also swallow 'false', so test for null explicitly)
+    jq -r "($1) as \$v
+        | if \$v == null then empty
+          elif (\$v | type) == \"array\" then (\$v | join(\",\"))
+          else (\$v | tostring) end" "${OPTIONS}"
+}
+
+ini_escape() {
+    # configparser interpolation: a literal % must be written as %%
+    printf '%s' "${1//%/%%}"
+}
+
+mkdir -p "${RUN_DIR}" "${CONF_DIR}"
+rm -f "${CONF_DIR}"/*.ini
+
+# Map add-on log level to taptap-mqtt log level
+taptap_log_level="error"
+case "$(opt '.log_level' | tr '[:upper:]' '[:lower:]')" in
+    all|trace|debug) taptap_log_level="debug" ;;
+    info|notice|"")  taptap_log_level="info" ;;
+    warning)         taptap_log_level="warning" ;;
+    error|fatal|off) taptap_log_level="error" ;;
+esac
+
+mqtt_server="$(opt '.mqtt_server')"
+mqtt_port="$(opt '.mqtt_port')"
+mqtt_qos="$(opt '.mqtt_qos')"
+mqtt_timeout="$(opt '.mqtt_timeout')"
+mqtt_user="$(opt '.mqtt_user')"
+mqtt_pass="$(opt '.mqtt_pass')"
+topic_prefix="$(opt '.taptap_topic_prefix')"
+update="$(opt '.taptap_update')"
+timeout="$(opt '.taptap_timeout')"
+discovery_prefix="$(opt '.ha_discovery_prefix')"
+birth_topic="$(opt '.ha_birth_topic')"
+
+if [[ -z "${mqtt_server}" ]]; then
+    bashio::exit.nok "Option 'mqtt_server' is required."
+fi
+
+count="$(jq '(.instances // []) | length' "${OPTIONS}")"
+if [[ "${count}" -lt 1 ]]; then
+    bashio::exit.nok "Configure at least one entry in 'instances'."
+fi
+
+declare -A seen_names=()
+declare -A seen_endpoints=()
+
+for ((i = 0; i < count; i++)); do
+    name="$(opt ".instances[${i}].name")"
+    address="$(opt ".instances[${i}].address")"
+    serial="$(opt ".instances[${i}].serial")"
+    port="$(opt ".instances[${i}].port")"
+    modules="$(opt ".instances[${i}].modules")"
+    port="${port:-502}"
+
+    if [[ ! "${name}" =~ ^[A-Za-z0-9_]+$ ]]; then
+        bashio::exit.nok "instances[${i}]: 'name' is required and may contain only letters, digits and '_'."
+    fi
+    if [[ -n "${seen_names[${name}]:-}" ]]; then
+        bashio::exit.nok "instances[${i}]: duplicate name '${name}' - every instance needs its own name."
+    fi
+    seen_names[${name}]=1
+
+    if [[ -n "${address}" && -n "${serial}" ]]; then
+        bashio::exit.nok "Instance '${name}': set either 'address' or 'serial', not both."
+    fi
+    if [[ -z "${address}" && -z "${serial}" ]]; then
+        bashio::exit.nok "Instance '${name}': set 'address' (RS485-to-Ethernet/WiFi converter IP) or 'serial' (USB adapter)."
+    fi
+    if [[ -n "${address}" && ! "${address}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        bashio::exit.nok "Instance '${name}': 'address' must be an IPv4 address (taptap-mqtt does not accept hostnames)."
+    fi
+
+    if [[ -z "${modules}" ]]; then
+        bashio::exit.nok "Instance '${name}': 'modules' must list at least one module, e.g. \":P01:\" (serials can be added later)."
+    fi
+
+    endpoint="${serial:-${address}:${port}}"
+    if [[ -n "${seen_endpoints[${endpoint}]:-}" ]]; then
+        bashio::exit.nok "Instance '${name}': converter ${endpoint} is already used by instance '${seen_endpoints[${endpoint}]}'."
+    fi
+    seen_endpoints[${endpoint}]="${name}"
+
+    conf="${CONF_DIR}/${name}.ini"
+    cat > "${conf}" <<EOF
+[MQTT]
+SERVER = ${mqtt_server}
+PORT = ${mqtt_port:-1883}
+QOS = ${mqtt_qos:-1}
+TIMEOUT = ${mqtt_timeout:-5}
+USER = $(ini_escape "${mqtt_user}")
+PASS = $(ini_escape "${mqtt_pass}")
+
+[TAPTAP]
+LOG_LEVEL = ${taptap_log_level}
+BINARY = /usr/bin/taptap/taptap
+SERIAL = ${serial}
+ADDRESS = ${address}
+PORT = ${port}
+MODULES = ${modules}
+TOPIC_PREFIX = ${topic_prefix:-taptap}
+TOPIC_NAME = ${name}
+TIMEOUT = ${timeout:-180}
+UPDATE = ${update:-10}
+STATE_FILE = ${DATA_DIR}/taptap_${name}.json
+
+[HA]
+DISCOVERY_PREFIX = ${discovery_prefix:-homeassistant}
+DISCOVERY_LEGACY = false
+BIRTH_TOPIC = ${birth_topic:-homeassistant/status}
+NODES_AVAILABILITY_ONLINE = $(opt '.ha_nodes_availability_online')
+NODES_AVAILABILITY_IDENTIFIED = $(opt '.ha_nodes_availability_identified')
+STRINGS_AVAILABILITY_ONLINE = $(opt '.ha_strings_availability_online')
+STRINGS_AVAILABILITY_IDENTIFIED = $(opt '.ha_strings_availability_identified')
+STATS_AVAILABILITY_ONLINE = $(opt '.ha_stats_availability_online')
+STATS_AVAILABILITY_IDENTIFIED = $(opt '.ha_stats_availability_identified')
+NODES_SENSORS_RECORDER = $(opt '.ha_nodes_sensors_recorder')
+STRINGS_SENSORS_RECORDER = $(opt '.ha_strings_sensors_recorder')
+STATS_SENSORS_RECORDER = $(opt '.ha_stats_sensors_recorder')
+
+[RUNTIME]
+MAX_ERROR = 0
+RUN_FILE = ${RUN_DIR}/${name}.state
+EOF
+    chmod 600 "${conf}"
+
+    module_count=0
+    [[ -n "${modules}" ]] && module_count=$(($(tr -cd ',' <<< "${modules}" | wc -c) + 1))
+    bashio::log.info "Instance '${name}': ${serial:-${address}:${port}}, ${module_count} module(s), MQTT topic ${topic_prefix:-taptap}/${name}"
+done
+
+bashio::log.info "Generated taptap-mqtt configuration for ${count} instance(s)."
