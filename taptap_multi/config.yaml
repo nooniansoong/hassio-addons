@@ -3,7 +3,7 @@
 # TapTap Multi - local fork of litinoveweedle/hassio-addons "taptap" (v0.3.4)
 # that runs one taptap-mqtt bridge per Tigo CCA / RS485 converter.
 name: TapTap Multi
-version: "0.3.4-multi.2"
+version: "0.3.4-multi.3"
 slug: taptap_multi
 description: Tigo CCA to Home Assistant MQTT bridge - multiple CCAs / RS485 converters
 url: "https://github.com/nooniansoong/hassio-addons/tree/main/taptap_multi"
@@ -35,6 +35,7 @@ options:
       modules: []
   ha_discovery_prefix: homeassistant
   ha_birth_topic: homeassistant/status
+  ha_device_per_node: true
   ha_nodes_availability_online: true
   ha_nodes_availability_identified: false
   ha_strings_availability_online: true
@@ -67,6 +68,7 @@ schema:
         - match(^(\w+)?\:(\w+):([0-9A-Z]\-[0-9A-Z]{7})?$)?
   ha_discovery_prefix: str
   ha_birth_topic: str
+  ha_device_per_node: bool?
   ha_nodes_availability_online: bool
   ha_nodes_availability_identified: bool
   ha_strings_availability_online: bool

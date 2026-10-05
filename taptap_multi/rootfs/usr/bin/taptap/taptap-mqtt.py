@@ -1,4 +1,10 @@
 #! /usr/bin/python3
+# taptap-mqtt v0.2.6 (https://github.com/litinoveweedle/taptap-mqtt), Apache 2.0
+# Patched for the TapTap Multi add-on (nooniansoong/hassio-addons):
+#  - HA/DEVICE_PER_NODE: publish one MQTT device per Tigo optimizer and per
+#    PV string (linked to the CCA device via via_device) so each panel can
+#    be assigned to its own area in Home Assistant
+#  - fix concatenated 'discovered nodes' log message
 
 import paho.mqtt.client as mqtt
 import functools
@@ -259,6 +265,7 @@ config_validation = {
         "NODES_SENSORS_RECORDER?": r"^(\s*\w+\s*)?(\,\s*\w+\s*)*$",
         "STRINGS_SENSORS_RECORDER?": r"^(\s*\w+\s*)?(\,\s*\w+\s*)*$",
         "STATS_SENSORS_RECORDER?": r"^(\s*\w+\s*)?(\,\s*\w+\s*)*$",
+        "DEVICE_PER_NODE?": r"^(true|false)$",
     },
     "RUNTIME": {
         "MAX_ERROR": r"^\d+$",
@@ -1257,8 +1264,8 @@ def taptap_nodes_conf(mode: bool) -> None:
     )
     logger.log(
         level,
-        f"Then copy and paste the line below into the MODULES_SERIALS configuration entry:"
-        ", ".join(nodes_conf),
+        "Then copy and paste the line below into the MODULES_SERIALS configuration entry: "
+        + ", ".join(nodes_conf),
     )
 
 
@@ -1318,6 +1325,8 @@ def taptap_discovery(mode: int) -> None:
         return
     if str_to_bool(config["HA"]["DISCOVERY_LEGACY"]):
         taptap_discovery_legacy(mode)
+    elif str_to_bool(config["HA"].get("DEVICE_PER_NODE", "false")):
+        taptap_discovery_device_per_node(mode)
     else:
         taptap_discovery_device(mode)
 
@@ -1398,6 +1407,11 @@ def taptap_discovery_device(mode: int) -> None:
         discovery["state_topic"] = state_topic
         discovery["qos"] = config["MQTT"]["QOS"]
 
+    global discovery_migrated
+    if len(discovery) and mode and not discovery_migrated:
+        taptap_discovery_device_remove_nodes()
+        discovery_migrated = True
+
     if len(discovery):
         if client and client.is_connected():
             # Sent discovery
@@ -1414,6 +1428,204 @@ def taptap_discovery_device(mode: int) -> None:
         else:
             print("MQTT not connected!")
             raise MqttError("MQTT not connected!")
+
+
+# ------------------------------------------------------------------------------
+# Device per node discovery (TapTap Multi patch)
+# ------------------------------------------------------------------------------
+discovery_devices = {}
+discovery_migrated = False
+
+
+def discovery_object_id(*parts: str) -> str:
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            "_".join(["taptap", config["TAPTAP"]["TOPIC_NAME"]] + list(parts)),
+        )
+    )
+
+
+def discovery_publish(object_id: str, payload) -> None:
+    if not (client and client.is_connected()):
+        print("MQTT not connected!")
+        raise MqttError("MQTT not connected!")
+    discovery_topic = (
+        config["HA"]["DISCOVERY_PREFIX"] + "/device/" + object_id + "/config"
+    )
+    logger.debug(f"Publish MQTT discovery topic {discovery_topic}")
+    logger.debug(payload)
+    client.publish(
+        discovery_topic,
+        payload=json.dumps(payload) if payload is not None else "",
+        qos=int(config["MQTT"]["QOS"]),
+    )
+
+
+def discovery_node_device_name(node_name: str) -> str:
+    # Use the short module name (e.g. "P01") when it is unique, otherwise the
+    # full name including the string prefix (e.g. "AP01")
+    short = nodes[node_name]["node_name_short"]
+    if [nodes[n]["node_name_short"] for n in nodes].count(short) == 1:
+        return short
+    return node_name
+
+
+@log_args
+def taptap_discovery_device_per_node(mode: int) -> None:
+    global discovery
+    global discovery_devices
+    global discovery_migrated
+
+    hub_id = discovery_object_id()
+    topic_title = config["TAPTAP"]["TOPIC_NAME"].title()
+    origin = {
+        "name": "TapTap MQTT Bridge",
+        "sw_version": "0.2.6-multi",
+        "support_url": "https://github.com/nooniansoong/hassio-addons",
+    }
+
+    if mode:
+        discovery_devices = {}
+        string_ids = {}
+
+        # CCA (hub) device with overall statistics
+        discovery = {
+            "device": {
+                "identifiers": hub_id,
+                "name": topic_title,
+                "manufacturer": "Tigo",
+                "model": "Tigo CCA",
+            },
+            "origin": origin,
+            "components": {},
+            "state_topic": state_topic,
+            "qos": config["MQTT"]["QOS"],
+        }
+        for sensor in sensors:
+            types = sensors[sensor]["type_stat"] if strings else sensors[sensor]["type_string"]
+            for type in types:
+                name = "_".join(["overall", sensor, type])
+                taptap_discovery_device_sensor(
+                    name,
+                    sensor,
+                    "stats",
+                    ["stats", "overall", sensor, type],
+                    ["stats", "overall"],
+                )
+        discovery_devices[hub_id] = discovery
+
+        # PV string devices with per string statistics
+        for string_name in strings:
+            string_id = discovery_object_id("string", string_name)
+            string_ids[string_name] = string_id
+            discovery = {
+                "device": {
+                    "identifiers": string_id,
+                    "name": topic_title + " String " + string_name,
+                    "manufacturer": "Tigo",
+                    "model": "PV string",
+                    "via_device": hub_id,
+                },
+                "origin": origin,
+                "components": {},
+                "state_topic": state_topic,
+                "qos": config["MQTT"]["QOS"],
+            }
+            for sensor in sensors:
+                for type in sensors[sensor]["type_string"]:
+                    name = "_".join(["string", string_name, sensor, type])
+                    taptap_discovery_device_sensor(
+                        name,
+                        sensor,
+                        "strings",
+                        ["stats", string_name, sensor, type],
+                        ["stats", string_name],
+                    )
+                    sensor_id = config["TAPTAP"]["TOPIC_NAME"] + "_" + name
+                    discovery["components"][sensor_id]["name"] = " ".join(
+                        [sensor.replace("_", " "), type]
+                    ).capitalize()
+            discovery_devices[string_id] = discovery
+
+        # Tigo optimizer (node) devices
+        for node_name in nodes:
+            node_id = discovery_object_id("node", node_name)
+            device = {
+                "identifiers": node_id,
+                "name": discovery_node_device_name(node_name),
+                "manufacturer": "Tigo",
+                "model": "TS4 optimizer",
+                "via_device": string_ids.get(nodes[node_name]["string_name"], hub_id),
+            }
+            if nodes[node_name]["node_serial"]:
+                device["serial_number"] = nodes[node_name]["node_serial"]
+            discovery = {
+                "device": device,
+                "origin": origin,
+                "components": {},
+                "state_topic": state_topic,
+                "qos": config["MQTT"]["QOS"],
+            }
+            for sensor in sensors:
+                if not sensors[sensor]["type_node"]:
+                    continue
+                name = "_".join([node_name, sensor])
+                taptap_discovery_device_sensor(
+                    name,
+                    sensor,
+                    "nodes",
+                    ["nodes", node_name, sensor],
+                    ["nodes", node_name],
+                )
+                sensor_id = config["TAPTAP"]["TOPIC_NAME"] + "_" + name
+                discovery["components"][sensor_id]["name"] = sensor.replace(
+                    "_", " "
+                ).capitalize()
+            discovery_devices[node_id] = discovery
+
+    if not discovery_devices:
+        return
+
+    if not discovery_migrated:
+        # Entities published by the single device discovery (same unique_ids)
+        # must be removed from the CCA device before they can be re-created
+        # under the node / string devices.
+        stubs = {}
+        for string_name in strings:
+            for sensor in sensors:
+                for type in sensors[sensor]["type_string"]:
+                    sensor_id = "_".join(
+                        [config["TAPTAP"]["TOPIC_NAME"], "string", string_name, sensor, type]
+                    )
+                    stubs[sensor_id] = {"platform": "sensor"}
+        for node_name in nodes:
+            for sensor in sensors:
+                if sensors[sensor]["type_node"]:
+                    sensor_id = "_".join([config["TAPTAP"]["TOPIC_NAME"], node_name, sensor])
+                    stubs[sensor_id] = {"platform": "sensor"}
+        hub = dict(discovery_devices[hub_id])
+        hub["components"] = dict(hub["components"], **stubs)
+        logger.info("Removing node and string entities from the CCA device")
+        discovery_publish(hub_id, hub)
+        time.sleep(3)
+        discovery_migrated = True
+
+    # CCA device first (via_device target), then strings and nodes
+    discovery_publish(hub_id, discovery_devices[hub_id])
+    for object_id, payload in discovery_devices.items():
+        if object_id != hub_id:
+            discovery_publish(object_id, payload)
+
+
+@log_args
+def taptap_discovery_device_remove_nodes() -> None:
+    # Switching back from device per node: remove the node / string devices
+    for string_name in strings:
+        discovery_publish(discovery_object_id("string", string_name), None)
+    for node_name in nodes:
+        discovery_publish(discovery_object_id("node", node_name), None)
+    time.sleep(3)
 
 
 @log_args

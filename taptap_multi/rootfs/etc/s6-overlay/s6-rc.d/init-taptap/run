@@ -49,6 +49,8 @@ update="$(opt '.taptap_update')"
 timeout="$(opt '.taptap_timeout')"
 discovery_prefix="$(opt '.ha_discovery_prefix')"
 birth_topic="$(opt '.ha_birth_topic')"
+device_per_node="$(opt '.ha_device_per_node')"
+device_per_node="${device_per_node:-true}"
 
 if [[ -z "${mqtt_server}" ]]; then
     bashio::exit.nok "Option 'mqtt_server' is required."
@@ -124,6 +126,7 @@ STATE_FILE = ${DATA_DIR}/taptap_${name}.json
 [HA]
 DISCOVERY_PREFIX = ${discovery_prefix:-homeassistant}
 DISCOVERY_LEGACY = false
+DEVICE_PER_NODE = ${device_per_node}
 BIRTH_TOPIC = ${birth_topic:-homeassistant/status}
 NODES_AVAILABILITY_ONLINE = $(opt '.ha_nodes_availability_online')
 NODES_AVAILABILITY_IDENTIFIED = $(opt '.ha_nodes_availability_identified')

@@ -22,7 +22,8 @@ ARG BUILD_REPO="nooniansoong/hassio-addons"
 ARG BUILD_VERSION
 
 # Replace the upstream single-instance service scripts with the multi-instance
-# ones (make them executable even if file modes were lost while copying)
+# ones and taptap-mqtt.py with the patched copy (device per optimizer);
+# make them executable even if file modes were lost while copying
 COPY rootfs /
 RUN rm -f /etc/taptap/config.gtpl /etc/taptap/config.ini \
     && mkdir -p /etc/taptap/instances \
@@ -30,6 +31,7 @@ RUN rm -f /etc/taptap/config.gtpl /etc/taptap/config.ini \
         /etc/s6-overlay/s6-rc.d/init-taptap/run \
         /etc/s6-overlay/s6-rc.d/taptap/run \
         /etc/s6-overlay/s6-rc.d/taptap/finish \
+        /usr/bin/taptap/taptap-mqtt.py \
     && test -x /usr/bin/taptap/taptap \
     && test -x /usr/bin/taptap/taptap-mqtt.py
 

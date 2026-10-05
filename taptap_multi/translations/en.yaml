@@ -33,6 +33,12 @@ configuration:
     name: HA discovery prefix
   ha_birth_topic:
     name: HA birth topic
+  ha_device_per_node:
+    name: One device per optimizer / string
+    description: >-
+      Publish every Tigo optimizer and PV string as its own Home Assistant device
+      (linked to the CCA device), so each panel can be assigned to an area.
+      Turn off to put all entities into a single CCA device (original behaviour).
   ha_nodes_availability_online:
     name: Node entities unavailable when node offline
   ha_nodes_availability_identified:

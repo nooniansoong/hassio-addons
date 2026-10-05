@@ -4,7 +4,7 @@
 
 ## 運作方式
 
-- 底層程式完全使用原作者的版本：
+- 底層程式使用原作者的版本（taptap-mqtt 加上「每片面板一個裝置」的修改，見下方）：
   - [taptap](https://github.com/litinoveweedle/taptap) v0.2.6
   - [taptap-mqtt](https://github.com/litinoveweedle/taptap-mqtt) v0.2.6
 - 只改了附加元件這一層：`instances` 底下每一個項目，都會各自產生一份設定檔，並啟動一個獨立的 taptap-mqtt 程序。
@@ -14,6 +14,20 @@
   - 各自的狀態檔 `/data/taptap_<name>.json`
 - Log 裡每一行前面都會加上 `[name]`，可以分辨是哪一台 CCA 的訊息。
 - 任何一個 instance 異常結束時，會**先平順關閉其他所有 instance，再讓整個附加元件結束**。打開「看門狗（Watchdog）」的話，HA 會自動把它重新啟動。
+
+## HA 裝置與分區（`ha_device_per_node`，預設開啟）
+
+開啟時，每個 instance 在 HA 裡會產生以下 MQTT 裝置，都可以在 **設定 → 裝置與服務 → MQTT → 裝置** 看到：
+
+| 裝置 | 內容 | 上層裝置（via） |
+|---|---|---|
+| `Tigo_2F`（instance 名稱） | 整台 CCA 的總計：總功率、每日發電量、在線節點數… | — |
+| `Tigo_2F String A`（有設定 2 個以上字串時） | 該字串的統計：最低/最高/平均電壓、總功率… | CCA |
+| `P01`、`P02`…（每片面板一個） | 輸入/輸出電壓、電流、功率、溫度、duty cycle、RSSI、每日發電量；已知序號會顯示在裝置資訊 | 字串或 CCA |
+
+因為每片面板都是獨立的裝置，可以**個別指定分區**：點進裝置 → 右上角 ✏️ → 分區。例如屋頂東側、屋頂西側、3F 遮陽棚等。裝置頁面會顯示上下層關係（「透過 Tigo_2F String A 連接」）。
+
+實體 ID **完全不變**（例如 `sensor.tigo_2f_p01_power`），只是改掛在面板裝置底下，原本的儀表板和自動化不需要修改。關閉這個選項就會回到原版的做法：所有實體都放在同一個 CCA 裝置。
 
 ## 硬體（每台 CCA 各一顆 EW11）
 
@@ -65,6 +79,7 @@ instances:
       # ...
 ha_discovery_prefix: homeassistant
 ha_birth_topic: homeassistant/status
+ha_device_per_node: true
 ha_nodes_availability_online: true
 ha_nodes_availability_identified: false
 ha_strings_availability_online: true
