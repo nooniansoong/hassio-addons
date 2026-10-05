@@ -5,6 +5,8 @@
 #    PV string (linked to the CCA device via via_device) so each panel can
 #    be assigned to its own area in Home Assistant
 #  - fix concatenated 'discovered nodes' log message
+#  - persist energy integrals (e.g. daily energy) to <STATE_FILE>_energy.json
+#    so restarts / MQTT reconnects don't reset them to 0 mid-day
 
 import paho.mqtt.client as mqtt
 import functools
@@ -374,6 +376,7 @@ nodes_configured = True
 
 # State telemetry data
 state = {}
+last_tele = 0
 
 # Power Reports cache
 cache = {}
@@ -767,6 +770,7 @@ def taptap_tele() -> None:
                 state_topic, payload=json.dumps(state), qos=int(config["MQTT"]["QOS"])
             )
             last_tele = now
+            energy_save()
         else:
             logger.error("MQTT not connected!")
             raise MqttError("MQTT not connected!")
@@ -777,6 +781,9 @@ def tele_init() -> None:
     global state
     global cache
     global last_tele
+
+    # Keep energy integrals over a re-init (e.g. after an MQTT reconnect)
+    snapshot = energy_snapshot() if last_tele and state.get("nodes") else None
 
     last_tele = 0
     dt = {
@@ -795,6 +802,109 @@ def tele_init() -> None:
 
     # Init Stats values
     reset_stats_tele(dt)
+
+    # Restore energy integrals (in-memory snapshot or persisted file)
+    energy_restore(snapshot)
+
+
+ENERGY_TYPES = ["daily", "weekly", "monthly", "yearly"]
+ENERGY_SAVE_INTERVAL = 60
+energy_last_save = 0.0
+
+
+def energy_file() -> str:
+    return os.path.splitext(config["TAPTAP"]["STATE_FILE"])[0] + "_energy.json"
+
+
+def energy_snapshot() -> dict:
+    data = {"time": last_tele, "nodes": {}, "stats": {}}
+    for node_name, node_state in state.get("nodes", {}).items():
+        for sensor in sensors:
+            node_type = sensors[sensor]["type_node"]
+            if not node_type or list(node_type)[0] not in ENERGY_TYPES:
+                continue
+            value = node_state.get(sensor)
+            if isinstance(value, (int, float)):
+                data["nodes"].setdefault(node_name, {})[sensor] = value
+    for group, group_state in state.get("stats", {}).items():
+        for sensor in sensors:
+            if not isinstance(group_state.get(sensor), dict):
+                continue
+            for type in ENERGY_TYPES:
+                value = group_state[sensor].get(type)
+                if isinstance(value, (int, float)):
+                    data["stats"].setdefault(group, {}).setdefault(sensor, {})[
+                        type
+                    ] = value
+    return data
+
+
+def energy_save(force: bool = False) -> None:
+    global energy_last_save
+    if not last_tele:
+        return
+    if not force and time.time() - energy_last_save < ENERGY_SAVE_INTERVAL:
+        return
+    path = energy_file()
+    try:
+        with open(path + ".tmp", "w") as file:
+            json.dump(energy_snapshot(), file)
+        os.replace(path + ".tmp", path)
+        energy_last_save = time.time()
+        logger.debug(f"Energy integrals saved to {path}")
+    except Exception as error:
+        logger.warning(f"Unable to save energy integrals to {path}: {error}")
+
+
+def energy_restore(snapshot=None) -> None:
+    global last_tele
+    data = snapshot
+    if data is None:
+        path = energy_file()
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path) as file:
+                data = json.load(file)
+        except Exception as error:
+            logger.warning(f"Unable to read energy integrals from {path}: {error}")
+            return
+
+    saved = data.get("time", 0) if isinstance(data, dict) else 0
+    if not isinstance(saved, (int, float)) or not 0 < saved <= time.time():
+        return
+
+    restored = 0
+    for node_name, values in data.get("nodes", {}).items():
+        if node_name not in state["nodes"]:
+            continue
+        for sensor, value in values.items():
+            if sensor in state["nodes"][node_name] and isinstance(value, (int, float)):
+                state["nodes"][node_name][sensor] = value
+                restored += 1
+    for group, group_values in data.get("stats", {}).items():
+        if group not in state["stats"]:
+            continue
+        for sensor, values in group_values.items():
+            if not isinstance(state["stats"][group].get(sensor), dict):
+                continue
+            for type, value in values.items():
+                if type in state["stats"][group][sensor] and isinstance(
+                    value, (int, float)
+                ):
+                    state["stats"][group][sensor][type] = value
+                    restored += 1
+
+    # Continue from the saved time: the regular period check on the next cycle
+    # resets the values if the day (week, month...) has changed meanwhile
+    last_tele = saved
+    logger.info(
+        f"Restored {restored} energy values from "
+        + ("memory" if snapshot is not None else energy_file())
+        + " (saved "
+        + datetime.fromtimestamp(saved, tz.tzlocal()).isoformat(timespec="seconds")
+        + ")"
+    )
 
 
 @log_args
@@ -2113,6 +2223,7 @@ while True:
             time.sleep(10)
         elif type(error) in [KeyboardInterrupt, SystemExit]:
             logger.error("Gracefully terminating application")
+            energy_save(force=True)
             mqtt_cleanup()
             taptap_cleanup()
             run_file(0)

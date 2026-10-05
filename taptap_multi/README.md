@@ -8,6 +8,7 @@ RS485 converter (e.g. Elfin EW11), all inside one add-on.
   (taptap v0.2.6, taptap-mqtt v0.2.6); only the s6 service scripts are replaced
 - Optional one HA device per Tigo optimizer / PV string (`ha_device_per_node`),
   so every panel can be assigned to its own area
+- Daily energy survives restarts (persisted to `/data`, restored on the same day)
 - New option `instances` (list of `name`, `address`/`serial`, `port`, `modules`)
 - Per-instance HA device, MQTT topic, state file and log prefix
 - If one bridge exits, the others are stopped gracefully and the add-on exits

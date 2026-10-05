@@ -12,6 +12,7 @@
   - HA 裡的裝置名稱，以及實體 ID 的開頭（例如 `sensor.tigo_p01_power`、`sensor.tigo2_p12_power`）
   - MQTT 主題 `taptap/<name>/...`
   - 各自的狀態檔 `/data/taptap_<name>.json`
+- 每日發電量（`energy`）每分鐘會存到 `/data/taptap_<name>_energy.json`。附加元件或 HA 重新啟動、MQTT 斷線重連之後，會**接續當天的累計值**，不會歸零；跨日則照常從 0 開始。
 - Log 裡每一行前面都會加上 `[name]`，可以分辨是哪一台 CCA 的訊息。
 - 任何一個 instance 異常結束時，會**先平順關閉其他所有 instance，再讓整個附加元件結束**。打開「看門狗（Watchdog）」的話，HA 會自動把它重新啟動。
 
