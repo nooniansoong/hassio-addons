@@ -7,12 +7,13 @@
 #  - fix concatenated 'discovered nodes' log message
 #  - persist energy integrals (e.g. daily energy) to <STATE_FILE>_energy.json
 #    so restarts / MQTT reconnects don't reset them to 0 mid-day
-#  - no guessing of node names: a node id whose serial is not yet known from
-#    an infrastructure report is never assigned to a node name that has a
-#    configured serial (upstream assigned them by arrival order, which put
-#    data of one panel under another panel's name); its data are ignored
-#    until the CCA reports the serial. Stale node id -> name entries are
-#    dropped on (re-)enumeration
+#  - once a gateway's node table (infrastructure report) is known, a node id
+#    missing from it is never assigned to a node name that has a configured
+#    serial (upstream assigned them by arrival order, which put data of one
+#    panel under another panel's name); its data are ignored until the CCA
+#    reports the serial. Before any node table is known the upstream
+#    arrival-order guess is kept (with a warning) so data still flow.
+#    Stale node id -> name entries are dropped on (re-)enumeration
 
 import paho.mqtt.client as mqtt
 import functools
@@ -381,6 +382,8 @@ gateways = {}
 nodes_configured = True
 # Node ids seen in power reports, waiting for their serial
 nodes_pending = set()
+# Gateway ids whose node table was received in an infrastructure report
+gateways_with_table = set()
 
 # State telemetry data
 state = {}
@@ -1241,6 +1244,12 @@ def taptap_infrastructure_event(data: dict) -> bool:
             logger.warning(f"Invalid nodes structure in the infrastructure event")
             logger.debug(data)
             continue
+        if data["nodes"][gateway_id]:
+            if gateway_id not in gateways_with_table:
+                logger.info(
+                    f"Received node table of gateway id: {gateway_id} ({len(data['nodes'][gateway_id])} nodes)",
+                )
+            gateways_with_table.add(gateway_id)
         for node_id in data["nodes"][gateway_id]:
             if not pattern_id.match(node_id):
                 logger.warning(
@@ -1423,11 +1432,15 @@ def taptap_enumerate_node(gateway_id: str, node_id: str) -> bool:
         # need to find unused node name and assign it to node_id temporarily;
         # names with a configured serial are reserved for their own node
         # (guessing by arrival order puts one panel's data under another name)
+        strict = gateway_id in gateways_with_table
         for node_name in nodes:
-            if (
-                nodes[node_name]["node_id"] is None
-                and nodes[node_name]["node_serial"] is None
+            if nodes[node_name]["node_id"] is None and (
+                nodes[node_name]["node_serial"] is None or not strict
             ):
+                if nodes[node_name]["node_serial"] is not None:
+                    logger.warning(
+                        f"Node table of gateway id: {gateway_id} not yet received, node id: {node_id} is GUESSED to be {node_name} (may be wrong until the CCA reports node serials)",
+                    )
                 nodes[node_name]["node_id"] = node_id
                 nodes_ids[node_id] = node_name
                 logger.info(
