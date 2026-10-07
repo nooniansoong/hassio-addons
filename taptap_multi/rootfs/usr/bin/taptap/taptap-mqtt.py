@@ -7,6 +7,12 @@
 #  - fix concatenated 'discovered nodes' log message
 #  - persist energy integrals (e.g. daily energy) to <STATE_FILE>_energy.json
 #    so restarts / MQTT reconnects don't reset them to 0 mid-day
+#  - no guessing of node names: a node id whose serial is not yet known from
+#    an infrastructure report is never assigned to a node name that has a
+#    configured serial (upstream assigned them by arrival order, which put
+#    data of one panel under another panel's name); its data are ignored
+#    until the CCA reports the serial. Stale node id -> name entries are
+#    dropped on (re-)enumeration
 
 import paho.mqtt.client as mqtt
 import functools
@@ -373,6 +379,8 @@ strings = {}
 gateways = {}
 # Bool if all nodes have serials configured
 nodes_configured = True
+# Node ids seen in power reports, waiting for their serial
+nodes_pending = set()
 
 # State telemetry data
 state = {}
@@ -1145,7 +1153,7 @@ def taptap_power_event(data: dict, now: float) -> bool:
                 )
                 if not taptap_enumerate_node(data["gateway_id"], data["node_id"]):
                     # get node name and serial and enumerate if necessary
-                    logger.warning(
+                    logger.debug(
                         f"Unable to enumerate node id: '{data['node_id']}'",
                     )
                     logger.debug(data)
@@ -1260,6 +1268,7 @@ def taptap_infrastructure_event(data: dict) -> bool:
                 logger.debug(
                     f"Discovered valid node serial: {node_serial}",
                 )
+                nodes_pending.discard(node_id)
                 nodes_ids.pop(node_id, None)
                 for node_name in sorted(nodes):
                     if nodes[node_name]["node_serial"] == node_serial:
@@ -1276,6 +1285,17 @@ def taptap_infrastructure_event(data: dict) -> bool:
                                 "gateway_address": gateway_address,
                             }
                         )
+                        # drop a temporary mapping of another node id to
+                        # this name, otherwise both ids would feed one panel
+                        for other_id in [
+                            i
+                            for i, n in nodes_ids.items()
+                            if n == node_name and i != node_id
+                        ]:
+                            logger.info(
+                                f"Delete stale mapping of node id: {other_id} to node name: {node_name}",
+                            )
+                            nodes_ids.pop(other_id)
                         nodes_ids[node_id] = node_name
                     elif nodes[node_name]["node_id"] == node_id:
                         # delete temporary mapping
@@ -1400,9 +1420,14 @@ def taptap_enumerate_node(gateway_id: str, node_id: str) -> bool:
             )
         return True
     else:
-        # need to find unused node name and assign it to node_id temporarily
+        # need to find unused node name and assign it to node_id temporarily;
+        # names with a configured serial are reserved for their own node
+        # (guessing by arrival order puts one panel's data under another name)
         for node_name in nodes:
-            if nodes[node_name]["node_id"] is None:
+            if (
+                nodes[node_name]["node_id"] is None
+                and nodes[node_name]["node_serial"] is None
+            ):
                 nodes[node_name]["node_id"] = node_id
                 nodes_ids[node_id] = node_name
                 logger.info(
@@ -1421,10 +1446,12 @@ def taptap_enumerate_node(gateway_id: str, node_id: str) -> bool:
                     )
                 return True
 
-    logger.warning(
-        f"Unable to enumerate node id: {node_id} - no more node names available!",
-    )
-    logger.debug(nodes)
+    if node_id not in nodes_pending:
+        nodes_pending.add(node_id)
+        logger.warning(
+            f"Node id: {node_id} is not yet identified (its serial is missing in the CCA node table), ignoring its data until the CCA reports it",
+        )
+        logger.debug(nodes)
     return False
 
 

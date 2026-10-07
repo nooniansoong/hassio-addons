@@ -110,6 +110,7 @@ ha_stats_sensors_recorder:
 - 序號要等 TAP 廣播出來才看得到，多半在夜間，**最多可能要等 24 小時**。
 - 偵測到還沒設定的序號時，Log 會顯示 `Discovered unconfigured node serial 4-XXXXXXX…`，並暫時把它分配到第一個空著的名稱。
 - 建議照 Tigo App 或雲端 Layout 上每片面板的序號，把對應關係正確填好。
+- 有設定序號的面板名稱**只會**對應到該序號的 TS4。CCA 的節點表（taptap 會存在 `/data/taptap_<name>.json`，重新啟動後沿用）裡還沒有某顆 TS4 時，它的資料會先**略過**，對應的面板暫時顯示「無法使用」，Log 會出現 `Node id: … is not yet identified`。等 CCA 送出完整節點表之後就會自動對上。原版會依資料到達的順序暫時借用空著的名稱，結果造成面板數值互換。
 
 ## 從原本的 TapTap 附加元件轉移
 
