@@ -113,6 +113,19 @@ ha_stats_sensors_recorder:
 - **還沒收到 CCA 節點表之前**（Log 沒有出現 `Received node table of gateway id`）：和原版一樣，依資料到達的順序暫時對應名稱，讓資料先出來，Log 會出現 `… is GUESSED to be …` 警告。這段期間面板可能會對錯。
 - **收到節點表之後**：有設定序號的名稱只會對應到該序號的 TS4。節點表裡沒有的 TS4，資料會先略過，Log 會出現 `Node id: … is not yet identified`，不會再塞到別片面板的名稱。節點表存在 `/data/taptap_<name>.json`，重新啟動後沿用。
 
+## 功率怎麼算
+
+TS4 的 power report 只量測 Vin、Vout、**輸入電流 Iin**（taptap 協定文件中標為 "Current in"），以及 DC-DC duty cycle，並沒有量測輸出電流。
+
+| 實體 | 計算方式 | 說明 |
+|---|---|---|
+| `power` | Vin × Iin | 面板功率，兩個都是量測值，最可靠；`energy` 每日發電量用這個積分 |
+| `power_out` | Vout × Iout | 推算的輸出功率（含優化器損耗），比較接近逆變器量到的值 |
+| `current_in` | Iin | TS4 回報的量測值 |
+| `current_out` | Iin ÷ duty | 推算值；duty 太小時改用 Vin × Iin ÷ Vout |
+
+0.3.4-multi.6 以前（和原版 taptap-mqtt）把回報電流當成輸出電流，用 Vout × Iin 計算功率。優化器降壓時（遮蔭、組串不匹配）會少算，少算的比例約等於 duty cycle。
+
 ## 從原本的 TapTap 附加元件轉移
 
 1. **先停用（或解除安裝）原本的 TapTap**，避免兩個附加元件同時發布到 `taptap/tigo`。

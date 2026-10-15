@@ -126,6 +126,17 @@ sensors = {
         "type_string": ["min", "max", "avg", "sum"],
         "type_stat": ["sum"],
     },
+    "power_out": {
+        "state_class": "measurement",
+        "device_class": "power",
+        "unit": "W",
+        "precision": 0,
+        "avail_online_key": "state_online",
+        "avail_ident_key": "state_identified",
+        "type_node": {"value": "power_out"},
+        "type_string": ["min", "max", "avg", "sum"],
+        "type_stat": ["sum"],
+    },
     "temperature": {
         "state_class": "measurement",
         "device_class": "temperature",
@@ -1148,12 +1159,21 @@ def taptap_power_event(data: dict, now: float) -> bool:
                 logger.debug(data)
                 return False
             else:
-                # Calculate power and current_out
-                data["current_out"] = data.pop("current")
-                data["power"] = data["voltage_out"] * data["current_out"]
-                data["current_in"] = (
-                    data["power"] / data["voltage_in"] if data["voltage_in"] else 0.0
-                )
+                # The TS4 power report carries the INPUT (module side) current,
+                # see taptap docs/protocol.md ("Current in"). power = Vin * Iin
+                # is the module power from two measured values. The output
+                # current is not measured: estimate it from the DC-DC duty
+                # cycle (Iout = Iin / duty), falling back to energy balance.
+                data["current_in"] = data.pop("current")
+                data["power"] = data["voltage_in"] * data["current_in"]
+                duty = data["dc_dc_duty_cycle"]
+                if duty > 0.05:
+                    data["current_out"] = data["current_in"] / duty
+                elif data["voltage_out"]:
+                    data["current_out"] = data["power"] / data["voltage_out"]
+                else:
+                    data["current_out"] = 0.0
+                data["power_out"] = data["voltage_out"] * data["current_out"]
                 if not taptap_enumerate_node(data["gateway_id"], data["node_id"]):
                     # get node name and serial and enumerate if necessary
                     logger.debug(
