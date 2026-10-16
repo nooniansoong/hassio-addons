@@ -53,7 +53,19 @@ device_per_node="$(opt '.ha_device_per_node')"
 device_per_node="${device_per_node:-true}"
 
 if [[ -z "${mqtt_server}" ]]; then
-    bashio::exit.nok "Option 'mqtt_server' is required."
+    # No broker configured: use the Mosquitto add-on through the Supervisor
+    # MQTT service, which hands out dedicated internal credentials.
+    if bashio::services.available "mqtt"; then
+        mqtt_server="$(bashio::services mqtt "host")"
+        mqtt_port="$(bashio::services mqtt "port")"
+        mqtt_user="$(bashio::services mqtt "username")"
+        mqtt_pass="$(bashio::services mqtt "password")"
+        bashio::log.info "Using MQTT service from the Supervisor: ${mqtt_server}:${mqtt_port} (user ${mqtt_user})"
+    else
+        bashio::exit.nok "No 'mqtt_server' configured and no MQTT service (Mosquitto add-on) available."
+    fi
+elif [[ -z "${mqtt_user}" || -z "${mqtt_pass}" ]]; then
+    bashio::log.warning "mqtt_server is set without mqtt_user/mqtt_pass; connecting anonymously."
 fi
 
 count="$(jq '(.instances // []) | length' "${OPTIONS}")"

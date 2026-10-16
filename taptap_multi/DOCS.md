@@ -54,12 +54,14 @@ nc <EW11 IP> 8899 | xxd | head
 
 ```yaml
 log_level: info
-mqtt_server: 192.168.11.155        # 或填 core-mosquitto
+# mqtt_server / mqtt_user / mqtt_pass 留空：自動使用 Mosquitto 附加元件（不需密碼）
+# 要連外部 broker 時才填：
+# mqtt_server: 192.168.11.155
+# mqtt_user: panda
+# mqtt_pass: "********"
 mqtt_port: 1883
 mqtt_qos: 1
 mqtt_timeout: 5
-mqtt_user: panda
-mqtt_pass: "********"
 taptap_topic_prefix: taptap
 taptap_update: 10
 taptap_timeout: 180
@@ -94,6 +96,12 @@ ha_strings_sensors_recorder:
 ha_stats_sensors_recorder:
   - energy
 ```
+
+### MQTT 連線
+
+`mqtt_server` 留空時，附加元件會透過 Supervisor 的 MQTT 服務自動連到 Mosquitto 附加元件，並使用 Mosquitto 發給它的專用內部帳密。設定裡不需要任何密碼，也就不會出現 Supervisor 的「不安全的密鑰」修復警告。
+
+只有要連到 HA 以外的 MQTT broker 時，才需要填 `mqtt_server`、`mqtt_user`、`mqtt_pass`（`mqtt_port` 預設 1883）。
 
 ### `instances` 各欄位說明
 

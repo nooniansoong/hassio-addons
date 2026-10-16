@@ -3,7 +3,7 @@
 # TapTap Multi - local fork of litinoveweedle/hassio-addons "taptap" (v0.3.4)
 # that runs one taptap-mqtt bridge per Tigo CCA / RS485 converter.
 name: TapTap Multi
-version: "0.3.4-multi.7"
+version: "0.3.4-multi.8"
 slug: taptap_multi
 description: Tigo CCA to Home Assistant MQTT bridge - multiple CCAs / RS485 converters
 url: "https://github.com/nooniansoong/hassio-addons/tree/main/taptap_multi"
@@ -14,15 +14,14 @@ arch:
 init: false
 timeout: 25
 uart: true
+services:
+  - mqtt:want
 usb: true
 options:
   log_level: info
-  mqtt_server: null
   mqtt_port: 1883
   mqtt_qos: 1
   mqtt_timeout: 5
-  mqtt_user: null
-  mqtt_pass: null
   taptap_topic_prefix: taptap
   taptap_update: 10
   taptap_timeout: 180
@@ -50,12 +49,12 @@ options:
     - energy
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
-  mqtt_server: str
-  mqtt_port: port
+  mqtt_server: str?
+  mqtt_port: port?
   mqtt_qos: int(0,2)
   mqtt_timeout: int(1,10)
-  mqtt_user: str
-  mqtt_pass: password
+  mqtt_user: str?
+  mqtt_pass: password?
   taptap_topic_prefix: match((\w+)(\/\w+)*)
   taptap_update: int
   taptap_timeout: int

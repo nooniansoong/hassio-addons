@@ -4,7 +4,7 @@ configuration:
     description: trace | debug | info | notice | warning | error | fatal
   mqtt_server:
     name: MQTT server
-    description: IPv4 address or hostname of the MQTT broker (Mosquitto add-on = core-mosquitto or the Home Assistant IP).
+    description: Leave empty to use the Mosquitto add-on automatically (no password needed). Otherwise the IPv4 address or hostname of the MQTT broker.
   mqtt_port:
     name: MQTT port
   mqtt_qos:
@@ -13,8 +13,10 @@ configuration:
     name: MQTT timeout
   mqtt_user:
     name: MQTT username
+    description: Only needed when MQTT server is set.
   mqtt_pass:
     name: MQTT password
+    description: Only needed when MQTT server is set.
   taptap_topic_prefix:
     name: MQTT topic prefix
     description: Topics are <prefix>/<instance name>/..., default taptap.
